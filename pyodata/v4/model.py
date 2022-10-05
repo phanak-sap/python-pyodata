@@ -986,27 +986,7 @@ class StructTypeProperty(VariableDeclaration):
     def from_etree(entity_type_property_node):
 
         return StructTypeProperty(
-            entity_type_property_node.get('Name'),
-            Types.parse_type_name(entity_type_property_node.get('Type')),
-            attribute_get_bool(entity_type_property_node, 'Nullable', True),
-            entity_type_property_node.get('MaxLength'),
-            entity_type_property_node.get('Precision'),
-            entity_type_property_node.get('Scale'),
-            # TODO: create a class SAP attributes
-            sap_attribute_get_bool(entity_type_property_node, 'unicode', True),
-            sap_attribute_get_string(entity_type_property_node, 'label'),
-            sap_attribute_get_bool(entity_type_property_node, 'creatable', True),
-            sap_attribute_get_bool(entity_type_property_node, 'updatable', True),
-            sap_attribute_get_bool(entity_type_property_node, 'sortable', True),
-            sap_attribute_get_bool(entity_type_property_node, 'filterable', True),
-            sap_attribute_get_string(entity_type_property_node, 'filter-restriction'),
-            sap_attribute_get_bool(entity_type_property_node, 'required-in-filter', False),
-            sap_attribute_get_string(entity_type_property_node, 'text'),
-            sap_attribute_get_bool(entity_type_property_node, 'visible', True),
-            sap_attribute_get_string(entity_type_property_node, 'display-format'),
-            sap_attribute_get_string(entity_type_property_node, 'value-list'),
-            # Back to regular, non-SAP attributes.
-            attribute_get_bool(entity_type_property_node, 'FixedLength', False),
+
         )
 
 
@@ -1335,7 +1315,9 @@ class ValueHelper(Annotation):
 
 
 class ValueHelperParameter:
-    Direction = Enum('Direction', 'In InOut Out DisplayOnly FilterOnly')
+    Direction = Enum(
+
+    )
 
     def __init__(self, direction, local_property_name, list_property_name):
         pass
@@ -1458,34 +1440,26 @@ def sap_attribute_get_bool(node, attr, default):
 
 
 ANNOTATION_NAMESPACES = {
-    'edm': 'http://docs.oasis-open.org/odata/ns/edm',
-    'edmx': 'http://docs.oasis-open.org/odata/ns/edmx'
+
 }
 
 SAP_VALUE_HELPER_DIRECTIONS = {
-    'com.sap.vocabularies.Common.v1.ValueListParameterIn': ValueHelperParameter.Direction.In,
-    'com.sap.vocabularies.Common.v1.ValueListParameterInOut': ValueHelperParameter.Direction.InOut,
-    'com.sap.vocabularies.Common.v1.ValueListParameterOut': ValueHelperParameter.Direction.Out,
-    'com.sap.vocabularies.Common.v1.ValueListParameterDisplayOnly': ValueHelperParameter.Direction.DisplayOnly,
-    'com.sap.vocabularies.Common.v1.ValueListParameterFilterOnly': ValueHelperParameter.Direction.FilterOnly
+
 }
 
 
-SAP_ANNOTATION_VALUE_LIST = ['com.sap.vocabularies.Common.v1.ValueList']
+SAP_ANNOTATION_VALUE_LIST = [
+
+]
 
 
 class MetadataBuilder:
     EDMX_WHITELIST = [
-        'http://schemas.microsoft.com/ado/2007/06/edmx',
-        'http://docs.oasis-open.org/odata/ns/edmx',
+
     ]
 
     EDM_WHITELIST = [
-        'http://schemas.microsoft.com/ado/2006/04/edm',
-        'http://schemas.microsoft.com/ado/2007/05/edm',
-        'http://schemas.microsoft.com/ado/2008/09/edm',
-        'http://schemas.microsoft.com/ado/2009/11/edm',
-        'http://docs.oasis-open.org/odata/ns/edm'
+
     ]
 
     def __init__(self, xml, config=None):
@@ -1536,9 +1510,3 @@ def schema_from_xml(metadata_xml, namespaces=None):
 
     return meta.build()
 
-# TODO Delete, deprecated from 1.02
-class Edmx:
-    @staticmethod
-    def parse(metadata_xml, namespaces=None):
-        warnings.warn("Edmx class is deprecated in favor of MetadataBuilder", DeprecationWarning)
-        return schema_from_xml(metadata_xml, namespaces)
