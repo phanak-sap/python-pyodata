@@ -7,6 +7,7 @@ Date:   2017-08-21
 # pylint: disable=missing-docstring,too-many-instance-attributes,too-many-arguments,protected-access,no-member,line-too-long,logging-format-interpolation,too-few-public-methods,too-many-lines, too-many-public-methods
 
 from enum import Enum, auto
+
 import warnings
 from abc import ABC, abstractmethod
 
@@ -15,6 +16,102 @@ from lxml import etree
 
 def modlog():
     pass
+
+
+class NullAssociation:
+    def __init__(self, name):
+        pass
+
+    def __getattr__(self, item):
+        pass
+
+class NullType:
+    def __init__(self, name):
+        pass
+
+    def __getattr__(self, item):
+        pass
+
+
+class ErrorPolicy(ABC):
+    @abstractmethod
+    def resolve(self, ekseption):
+        pass
+
+
+class PolicyFatal(ErrorPolicy):
+    def resolve(self, ekseption):
+        pass
+
+
+class PolicyWarning(ErrorPolicy):
+    def __init__(self):
+        pass
+
+    def resolve(self, ekseption):
+        pass
+
+
+class PolicyIgnore(ErrorPolicy):
+    def resolve(self, ekseption):
+        pass
+
+
+class ParserError(Enum):
+    PROPERTY = auto()
+    ANNOTATION = auto()
+    ASSOCIATION = auto()
+
+    ENUM_TYPE = auto()
+    ENTITY_TYPE = auto()
+    COMPLEX_TYPE = auto()
+
+
+class Config:
+
+    def __init__(self,
+                 custom_error_policies=None,
+                 default_error_policy=None,
+                 xml_namespaces=None,
+                 retain_null=False):
+
+        """
+        :param custom_error_policies: {ParserError: ErrorPolicy} (default None)
+                                      Used to specified individual policies for XML tags. See documentation for more
+                                      details.
+
+        :param default_error_policy: ErrorPolicy (default PolicyFatal)
+                                     If custom policy is not specified for the tag, the default policy will be used.
+
+        :param xml_namespaces: {str: str} (default None)
+
+        :param retain_null: bool (default False)
+                            If true, do not substitute missing (and null-able) values with default value.
+        """
+
+        pass
+
+    def err_policy(self, error: ParserError):
+        pass
+
+    def set_default_error_policy(self, policy: ErrorPolicy):
+        pass
+
+    def set_custom_error_policy(self, policies: dict):
+        pass
+
+    @property
+    def namespaces(self):
+        pass
+
+    @namespaces.setter
+    def namespaces(self, value: dict):
+        pass
+
+    @property
+    def retain_null(self):
+        pass
+
 
 class Identifier:
     def __init__(self, name):
