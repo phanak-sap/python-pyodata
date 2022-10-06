@@ -8,11 +8,11 @@ Date:   2017-08-21
 
 from enum import Enum, auto
 
-import warnings
+import io
 from abc import ABC, abstractmethod
 
 from lxml import etree
-
+from pyodata.exceptions import PyODataException, PyODataModelError, PyODataParserError
 
 def modlog():
     pass
@@ -89,7 +89,20 @@ class Config:
                             If true, do not substitute missing (and null-able) values with default value.
         """
 
-        pass
+        self._custom_error_policy = custom_error_policies
+
+        if default_error_policy is None:
+            default_error_policy = PolicyFatal()
+
+        self._default_error_policy = default_error_policy
+
+        if xml_namespaces is None:
+            xml_namespaces = {}
+
+        self._namespaces = xml_namespaces
+
+        self._retain_null = retain_null
+
 
     def err_policy(self, error: ParserError):
         pass
@@ -102,11 +115,11 @@ class Config:
 
     @property
     def namespaces(self):
-        pass
+        return self._namespaces
 
     @namespaces.setter
     def namespaces(self, value: dict):
-        pass
+        self._namespaces = value
 
     @property
     def retain_null(self):
@@ -586,7 +599,11 @@ class Schema:
             pass
 
     def __init__(self, config: Config):
-        pass
+        super(Schema, self).__init__()
+
+        self._decls = Schema.Declarations()
+        self._config = config
+        self._is_valid = False
 
     def __str__(self):
         pass
@@ -680,6 +697,12 @@ class Schema:
     # pylint: disable=too-many-locals,too-many-branches,too-many-statements
     @staticmethod
     def from_etree(schema_nodes, config: Config):
+        schema = Schema(config)
+        schema._is_valid = True
+
+        return schema
+
+
         # Parse Schema nodes by parts to get over the problem of not-yet known
         # entity types referenced by entity sets, function imports and
         # annotations.
@@ -712,7 +735,6 @@ class Schema:
             # Check if role is defined in Association
 
         # Finally, process Annotation nodes when all Scheme nodes are completely processed.
-        pass
 
 
 class StructType(Typ):
@@ -1315,9 +1337,7 @@ class ValueHelper(Annotation):
 
 
 class ValueHelperParameter:
-    Direction = Enum(
 
-    )
 
     def __init__(self, direction, local_property_name, list_property_name):
         pass
@@ -1454,16 +1474,29 @@ SAP_ANNOTATION_VALUE_LIST = [
 
 
 class MetadataBuilder:
-    EDMX_WHITELIST = [
 
+    EDMX_WHITELIST_V4 = [
+        'http://schemas.microsoft.com/ado/2007/06/edmx', # EDMX version 1.0
+        'http://docs.oasis-open.org/odata/ns/edmx',      # CSDL version 4.0
     ]
+    #  2.1 Namespace EDMX,  from http://docs.oasis-open.org/odata/odata/v4.0/csd01/part3-csdl/odata-v4.0-csd01-part3-csdl.html#_Toc355092816
 
-    EDM_WHITELIST = [
-
+    EDM_WHITELIST_V4 = [
+        'http://schemas.microsoft.com/ado/2006/04/edm', # CSDL version 1.0
+        'http://schemas.microsoft.com/ado/2007/05/edm', # CSDL version 1.1
+        'http://schemas.microsoft.com/ado/2008/01/edm', # CSDL version 1.2
+        'http://schemas.microsoft.com/ado/2008/09/edm', # CSDL version 2.0
+        'http://schemas.microsoft.com/ado/2009/11/edm', # CSDL version 3.0
+        'http://docs.oasis-open.org/odata/ns/edm',      # CSDL version 4.0
     ]
+    # 2.2 Namespace EDM, from http://docs.oasis-open.org/odata/odata/v4.0/csd01/part3-csdl/odata-v4.0-csd01-part3-csdl.html#_Toc355092817
 
     def __init__(self, xml, config=None):
-        pass
+        self._xml = xml
+
+        if config is None:
+            config = Config()
+        self._config = config
 
     @property
     def config(self):
@@ -1472,18 +1505,59 @@ class MetadataBuilder:
 
     def build(self):
         """ Build model from the XML metadata"""
+        #TODO - feature - v4 has possibility of JSON metadata as well
 
-        # parse the input as XML
+        if isinstance(self._xml, str):
+            mdf = io.StringIO(self._xml)
+        elif isinstance(self._xml, bytes):
+            mdf = io.BytesIO(self._xml)
+        else:
+            raise TypeError(f'Expected bytes or str type on metadata_xml, got : {type(self._xml)}')
 
-        # DataServices element
+        namespaces = self._config.namespaces
 
-        # Schema element
+        try:
+            xml = etree.parse(mdf)
+        except etree.XMLSyntaxError as ex:
+            raise PyODataParserError('Metadata document syntax error') from ex
 
-        # edmx and edm Namespaces
+        edmx = xml.getroot()
+        #TODO missing attribute checks of root and possilbe PyodataParserError for invalid root element scenarios
 
-        # parse the schema from etree Schema.from_etree()
+        try:
+            dataservices = next((child for child in edmx if etree.QName(child.tag).localname == 'DataServices'))
+        except StopIteration:
+            raise PyODataParserError('Metadata document is missing the element DataServices')
 
-        #return parsed schema
+        try:
+            schema = next((child for child in dataservices if etree.QName(child.tag).localname == 'Schema'))
+        except StopIteration:
+            raise PyODataParserError('Metadata document is missing the element Schema')
+
+        if 'edmx' not in self._config.namespaces:
+            namespace = etree.QName(edmx.tag).namespace
+
+            if namespace not in self.EDMX_WHITELIST_V4:
+                raise PyODataParserError(f'Unsupported Edmx namespace - {namespace}')
+
+            namespaces['edmx'] = namespace
+
+        if 'edm' not in self._config.namespaces:
+            namespace = etree.QName(schema.tag).namespace
+
+            if namespace not in self.EDM_WHITELIST_V4:
+                raise PyODataParserError(f'Unsupported Schema namespace - {namespace}')
+
+            namespaces['edm'] = namespace
+
+        self._config.namespaces = namespaces
+
+        self.update_global_variables_with_alias(self.get_aliases(xml, self._config))
+
+        edm_schemas = xml.xpath('/edmx:Edmx/edmx:DataServices/edm:Schema', namespaces=self._config.namespaces)
+        schema = Schema.from_etree(edm_schemas, self._config)
+        return schema
+
 
     @staticmethod
     def get_aliases(edmx, config: Config):

@@ -1,0 +1,7 @@
+<edmx:Edmx xmlns:edmx="http://docs.oasis-open.org/odata/ns/edmx" Version="INVALID">
+  <edmx:DataServices>
+    <Schema xmlns="http://docs.oasis-open.org/odata/ns/edm" Namespace="MANDATORY">
+    </Schema>
+  </edmx:DataServices>
+</edmx:Edmx>
+
