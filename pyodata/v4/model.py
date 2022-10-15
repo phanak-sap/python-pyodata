@@ -6,13 +6,21 @@ Date:   2017-08-21
 """
 # pylint: disable=missing-docstring,too-many-instance-attributes,too-many-arguments,protected-access,no-member,line-too-long,logging-format-interpolation,too-few-public-methods,too-many-lines, too-many-public-methods
 
-from enum import Enum, auto
 
-import io
+
 from abc import ABC, abstractmethod
+import base64
+import collections
+from enum import Enum, auto
+import io
+import re
 
 from lxml import etree
 from pyodata.exceptions import PyODataException, PyODataModelError, PyODataParserError
+
+IdentifierInfo = collections.namedtuple('IdentifierInfo', 'namespace name')
+TypeInfo = collections.namedtuple('TypeInfo', 'namespace name is_collection')
+
 
 def modlog():
     pass
@@ -27,10 +35,11 @@ class NullAssociation:
 
 class NullType:
     def __init__(self, name):
-        pass
+        self.name = name
 
     def __getattr__(self, item):
-        pass
+        raise PyODataModelError(f'Cannot access this type. An error occurred during parsing '
+                                f'type stated in xml({self.name}) was not found, therefore it has been replaced with NullType.')
 
 
 class ErrorPolicy(ABC):
@@ -128,25 +137,31 @@ class Config:
 
 class Identifier:
     def __init__(self, name):
-        pass
+        super(Identifier, self).__init__()
+
+        self._name = name
 
     def __repr__(self):
-        pass
+        return f"{self.__class__.__name__}({self._name})"
 
     def __str__(self):
-        pass
+        return f"{self.__class__.__name__}({self._name})"
 
     @property
     def name(self):
-        pass
+        return self._name
 
     @staticmethod
     def parse(value):
-        pass
+        parts = value.split('.')
 
+        if len(parts) == 1:
+            return IdentifierInfo(None, value)
+
+        return IdentifierInfo('.'.join(parts[:-1]), parts[-1])
 
 class Types:
-    """Repository of all available OData V2 primitive types + their Collection variants
+    """Repository of all available OData V4 primitive types + their Collection variants
 
        Since each type has instance of appropriate type, this
        repository acts as central storage for all instances. The
@@ -158,19 +173,227 @@ class Types:
 
     @staticmethod
     def _build_types():
-        pass
+        if Types.Types is None:
+            Types.Types = {}
+            Types.register_type(Typ('Null', 'null'))
+            Types.register_type(Typ('Edm.Binary', 'binary\'\'', EdmBinaryTypTraits('(?:binary|X)')))
+            Types.register_type(Typ('Edm.Boolean', 'false', EdmBooleanTypTraits()))
+            Types.register_type(Typ('Edm.Byte', '0'))
+
+
 
     @staticmethod
     def register_type(typ):
-        pass
+        """Add new  type to the type repository as well as its collection variant"""
+
+        # build types hierarchy on first use (lazy creation)
+        if Types.Types is None:
+            Types._build_types()
+
+        # register type only if it doesn't exist
+        # pylint: disable=unsupported-membership-test
+        if typ.name not in Types.Types:
+            # pylint: disable=unsupported-assignment-operation
+            Types.Types[typ.name] = typ
+
+        # automatically create and register collection variant if not exists
+        collection_name = f'Collection({typ.name})'
+        # pylint: disable=unsupported-membership-test
+        if collection_name not in Types.Types:
+            collection_typ = Collection(typ.name, typ)
+            # pylint: disable=unsupported-assignment-operation
+            Types.Types[collection_name] = collection_typ
+
 
     @staticmethod
     def from_name(name):
-        pass
+
+        # build types hierarchy on first use (lazy creation)
+        if Types.Types is None:
+            Types._build_types()
+
+        search_name = name
+
+        # detect if name represents collection
+        is_collection = name.lower().startswith('collection(') and name.endswith(')')
+        if is_collection:
+            name = name[11:-1]  # strip collection() decorator
+            search_name = f'Collection({name})'
+
+        # pylint: disable=unsubscriptable-object
+        return Types.Types[search_name]
 
     @staticmethod
     def parse_type_name(type_name):
+
+        # detect if name represents collection
+        is_collection = type_name.lower().startswith('collection(') and type_name.endswith(')')
+        if is_collection:
+            type_name = type_name[11:-1]  # strip collection() decorator
+
+        identifier = Identifier.parse(type_name)
+
+        if identifier.namespace == 'Edm':
+            return TypeInfo(None, type_name, is_collection)
+
+        return TypeInfo(identifier.namespace, identifier.name, is_collection)
+
+
+
+class TypTraits:
+    """Encapsulated differences between types"""
+
+    def __repr__(self):
+        return self.__class__.__name__
+
+    # pylint: disable=no-self-use
+    def to_literal(self, value):
+        return value
+
+    # pylint: disable=no-self-use
+    def from_json(self, value):
+        return value
+
+    def to_json(self, value):
+        return value
+
+    def from_literal(self, value):
+        return value
+
+
+class Typ(Identifier):
+    Types = None
+
+    Kinds = Enum('Kinds', 'Primitive Complex')
+
+    def __init__(self, name, null_value, traits=TypTraits(), kind=None):
+        super(Typ, self).__init__(name)
+
+        self._null_value = null_value
+        self._kind = kind if kind is not None else Typ.Kinds.Primitive  # no way how to us enum value for parameter default value
+        self._traits = traits
+
+    @property
+    def null_value(self):
+        return self._null_value
+
+    @property
+    def traits(self):
+        return self._traits
+
+    @property
+    def is_collection(self):
+        raise NotImplementedError
+        #return False
+
+    @property
+    def kind(self):
+        raise NotImplementedError
+        #return self._kind
+
+
+class Collection(Typ):
+    """Represents collection items"""
+
+    def __init__(self, name, item_type):
         pass
+
+    def __repr__(self):
+        raise NotImplementedError
+        pass
+
+    @property
+    def is_collection(self):
+        return True
+
+    @property
+    def item_type(self):
+        return self._item_type
+
+    @property
+    def traits(self):
+        return self
+
+    # pylint: disable=no-self-use
+    def to_literal(self, value):
+        pass
+
+    # pylint: disable=no-self-use
+    def from_json(self, value):
+        pass
+
+
+class VariableDeclaration(Identifier):
+    MAXIMUM_LENGTH = -1
+
+    def __init__(self, name, type_info, nullable, max_length, precision, scale, fixed_length=None):
+        raise NotImplementedError
+        pass
+
+    @property
+    def type_info(self):
+        pass
+
+    @property
+    def typ(self):
+        pass
+
+    @typ.setter
+    def typ(self, value):
+        pass
+
+    @property
+    def nullable(self):
+        pass
+
+    @property
+    def max_length(self):
+        pass
+
+    @property
+    def precision(self):
+        pass
+
+    @property
+    def scale(self):
+        pass
+
+    @property
+    def fixed_length(self):
+        pass
+
+    def from_literal(self, value):
+        pass
+
+    def to_literal(self, value):
+        pass
+
+    def from_json(self, value):
+        pass
+
+    def to_json(self, value):
+        pass
+
+    def _check_scale_value(self):
+        pass
+
+
+class EdmPrefixedTypTraits(TypTraits):
+    """Is good for all types where values have form: prefix'value'"""
+
+    def __init__(self, prefix):
+        super(EdmPrefixedTypTraits, self).__init__()
+        self._prefix = prefix
+
+    def to_literal(self, value):
+        return '{}\'{}\''.format(self._prefix, value)
+
+    def from_literal(self, value):
+        matches = re.match(f"^{self._prefix}'(.*)'$", value)
+        if not matches:
+            raise PyODataModelError(
+                f"Malformed value {value} for primitive Edm type. Expected format is {self._prefix}'value'")
+        return matches.group(1)
 
 
 class EdmStructTypeSerializer:
@@ -197,48 +420,16 @@ class EdmStructTypeSerializer:
         pass
 
 
-class TypTraits:
-    """Encapsulated differences between types"""
-
-    def __repr__(self):
-        return self.__class__.__name__
-
-    # pylint: disable=no-self-use
-    def to_literal(self, value):
-        return value
-
-    # pylint: disable=no-self-use
-    def from_json(self, value):
-        return value
-
-    def to_json(self, value):
-        return value
-
-    def from_literal(self, value):
-        return value
-
-
-class EdmPrefixedTypTraits(TypTraits):
-    """Is good for all types where values have form: prefix'value'"""
-
-    def __init__(self, prefix):
-        pass
-
-    def to_literal(self, value):
-        pass
-
-    def from_literal(self, value):
-        pass
-
-
 class EdmBinaryTypTraits(EdmPrefixedTypTraits):
     """Edm.Binary traits"""
 
     def to_literal(self, value):
-        pass
+        binary = base64.b64decode(value, validate=True)
+        return f"binary'{base64.b16encode(binary).decode()}'"
 
     def from_literal(self, value):
-        pass
+        binary = base64.b16decode(super().from_literal(value), casefold=True)
+        return base64.b64encode(binary).decode()
 
 
 def ms_since_epoch_to_datetime(value, tzinfo):
@@ -339,14 +530,14 @@ class EdmBooleanTypTraits(TypTraits):
 
     # pylint: disable=no-self-use
     def to_literal(self, value):
-        pass
+        return 'true' if value else 'false'
 
     # pylint: disable=no-self-use
     def from_json(self, value):
-        pass
+        return value
 
     def from_literal(self, value):
-        pass
+        return value == 'true'
 
 
 class EdmIntTypTraits(TypTraits):
@@ -446,295 +637,6 @@ class EnumTypTrait(TypTraits):
     def from_literal(self, value):
         pass
 
-
-class Typ(Identifier):
-    Types = None
-
-    Kinds = Enum('Kinds', 'Primitive Complex')
-
-    def __init__(self, name, null_value, traits=TypTraits(), kind=None):
-        pass
-
-    @property
-    def null_value(self):
-        pass
-
-    @property
-    def traits(self):
-        pass
-
-    @property
-    def is_collection(self):
-        pass
-
-    @property
-    def kind(self):
-        pass
-
-
-class Collection(Typ):
-    """Represents collection items"""
-
-    def __init__(self, name, item_type):
-        pass
-
-    def __repr__(self):
-        pass
-
-    @property
-    def is_collection(self):
-        return True
-
-    @property
-    def item_type(self):
-        return self._item_type
-
-    @property
-    def traits(self):
-        return self
-
-    # pylint: disable=no-self-use
-    def to_literal(self, value):
-        pass
-
-    # pylint: disable=no-self-use
-    def from_json(self, value):
-        pass
-
-
-class VariableDeclaration(Identifier):
-    MAXIMUM_LENGTH = -1
-
-    def __init__(self, name, type_info, nullable, max_length, precision, scale, fixed_length=None):
-        pass
-
-    @property
-    def type_info(self):
-        pass
-
-    @property
-    def typ(self):
-        pass
-
-    @typ.setter
-    def typ(self, value):
-        pass
-
-    @property
-    def nullable(self):
-        pass
-
-    @property
-    def max_length(self):
-        pass
-
-    @property
-    def precision(self):
-        pass
-
-    @property
-    def scale(self):
-        pass
-
-    @property
-    def fixed_length(self):
-        pass
-
-    def from_literal(self, value):
-        pass
-
-    def to_literal(self, value):
-        pass
-
-    def from_json(self, value):
-        pass
-
-    def to_json(self, value):
-        pass
-
-    def _check_scale_value(self):
-        pass
-
-
-class Schema:
-    class Declaration:
-        def __init__(self, namespace):
-            # generated collections for ease of lookup (e.g. function import return type)
-            self._collections_entity_types = dict()
-            self._collections_complex_types = dict()
-
-        def list_entity_types(self):
-            pass
-
-        def list_complex_types(self):
-            pass
-
-        def list_enum_types(self):
-            pass
-
-        def list_entity_sets(self):
-            pass
-
-        def list_function_imports(self):
-            pass
-
-        def list_associations(self):
-            pass
-
-        def list_association_sets(self):
-            pass
-
-        def add_entity_type(self, etype):
-            pass
-
-        def add_complex_type(self, ctype):
-            pass
-
-        def add_enum_type(self, etype):
-            pass
-
-    class Declarations(dict):
-
-        def __getitem__(self, key):
-            pass
-
-    def __init__(self, config: Config):
-        super(Schema, self).__init__()
-
-        self._decls = Schema.Declarations()
-        self._config = config
-        self._is_valid = False
-
-    def __str__(self):
-        pass
-
-    @property
-    def namespaces(self):
-        pass
-
-    @property
-    def config(self):
-        pass
-
-    @property
-    def is_valid(self):
-        """Returns if metadata provided were parsed to schema without any problem regardless of Policies (Fatal, Warning, Ignore).
-
-        Policies affects behaviour o parser while this property represents status.
-        """
-        return self._is_valid
-
-    def typ(self, type_name, namespace=None):
-        """Returns either EntityType, ComplexType or EnumType that matches the name.
-        """
-        pass
-
-
-    def entity_type(self, type_name, namespace=None):
-        pass
-
-    def _collections_entity_types(self, type_name, namespace=None):
-        pass
-
-    def complex_type(self, type_name, namespace=None):
-        pass
-
-    def _collections_complex_types(self, type_name, namespace=None):
-        pass
-
-    def enum_type(self, type_name, namespace=None):
-        pass
-
-    def get_type(self, type_info):
-        pass
-
-    @property
-    def entity_types(self):
-        pass
-
-    @property
-    def complex_types(self):
-        pass
-
-    @property
-    def enum_types(self):
-        pass
-
-    def entity_set(self, set_name, namespace=None):
-        pass
-
-    @property
-    def entity_sets(self):
-        pass
-
-    def function_import(self, function_import, namespace=None):
-        pass
-
-    @property
-    def function_imports(self):
-        pass
-
-    def association(self, association_name, namespace=None):
-        pass
-
-    @property
-    def associations(self):
-        pass
-
-    def association_set_by_association(self, association_name, namespace=None):
-        pass
-
-    def association_set(self, set_name, namespace=None):
-        pass
-
-    @property
-    def association_sets(self):
-        pass
-
-    def check_role_property_names(self, role, entity_type_name, namespace):
-        pass
-
-    # pylint: disable=too-many-locals,too-many-branches,too-many-statements
-    @staticmethod
-    def from_etree(schema_nodes, config: Config):
-        schema = Schema(config)
-        schema._is_valid = True
-
-        return schema
-
-
-        # Parse Schema nodes by parts to get over the problem of not-yet known
-        # entity types referenced by entity sets, function imports and
-        # annotations.
-
-        # First, process EnumType, EntityType and ComplexType nodes. They have almost no dependencies on other elements.
-
-        # resolve types of properties
-
-            # skip collections (no need to assign any types since type of collection
-            # items is resolved separately
-
-        # Then, process Associations nodes because they refer EntityTypes and
-        # they are referenced by AssociationSets.
-
-            # Check if the role was defined in the current association
-            # Check if principal role properties exist
-            # Check if the role was defined in the current association
-            # Check if dependent role properties exist
-
-        # resolve navigation properties
-            # skip null type
-            # skip collections
-
-        # Then, process EntitySet, FunctionImport and AssociationSet nodes.
-            # complete type information for return type and parameters
-
-            # Check if an entity set exists in the current scheme
-            # and add a reference to the corresponding entity set
-
-            # Check if role is defined in Association
-
-        # Finally, process Annotation nodes when all Scheme nodes are completely processed.
 
 
 class StructType(Typ):
@@ -1459,6 +1361,10 @@ def sap_attribute_get_bool(node, attr, default):
     pass
 
 
+#-----------------------------
+# TODO  - Probably a natural place to split to two modules
+#-----------------------------
+
 ANNOTATION_NAMESPACES = {
 
 }
@@ -1471,6 +1377,188 @@ SAP_VALUE_HELPER_DIRECTIONS = {
 SAP_ANNOTATION_VALUE_LIST = [
 
 ]
+
+class Schema:
+    class Declaration:
+        def __init__(self, namespace):
+            # generated collections for ease of lookup (e.g. function import return type)
+            self._collections_entity_types = dict()
+            self._collections_complex_types = dict()
+
+        def list_entity_types(self):
+            pass
+
+        def list_complex_types(self):
+            pass
+
+        def list_enum_types(self):
+            pass
+
+        def list_entity_sets(self):
+            pass
+
+        def list_function_imports(self):
+            pass
+
+        def list_associations(self):
+            pass
+
+        def list_association_sets(self):
+            pass
+
+        def add_entity_type(self, etype):
+            pass
+
+        def add_complex_type(self, ctype):
+            pass
+
+        def add_enum_type(self, etype):
+            pass
+
+    class Declarations(dict):
+
+        def __getitem__(self, key):
+            pass
+
+    def __init__(self, config: Config):
+        super(Schema, self).__init__()
+
+        self._decls = Schema.Declarations()
+        self._config = config
+        self._is_valid = False
+
+    def __str__(self):
+        pass
+
+    @property
+    def namespaces(self):
+        pass
+
+    @property
+    def config(self):
+        pass
+
+    @property
+    def is_valid(self):
+        """Returns if metadata provided were parsed to schema without any problem regardless of Policies (Fatal, Warning, Ignore).
+
+        Policies affects behaviour o parser while this property represents status.
+        """
+        return self._is_valid
+
+    def typ(self, type_name, namespace=None):
+        """Returns either EntityType, ComplexType or EnumType that matches the name.
+        """
+        pass
+
+
+    def entity_type(self, type_name, namespace=None):
+        pass
+
+    def _collections_entity_types(self, type_name, namespace=None):
+        pass
+
+    def complex_type(self, type_name, namespace=None):
+        pass
+
+    def _collections_complex_types(self, type_name, namespace=None):
+        pass
+
+    def enum_type(self, type_name, namespace=None):
+        pass
+
+    def get_type(self, type_info):
+        pass
+
+    @property
+    def entity_types(self):
+        pass
+
+    @property
+    def complex_types(self):
+        pass
+
+    @property
+    def enum_types(self):
+        pass
+
+    def entity_set(self, set_name, namespace=None):
+        pass
+
+    @property
+    def entity_sets(self):
+        pass
+
+    def function_import(self, function_import, namespace=None):
+        pass
+
+    @property
+    def function_imports(self):
+        pass
+
+    def association(self, association_name, namespace=None):
+        pass
+
+    @property
+    def associations(self):
+        pass
+
+    def association_set_by_association(self, association_name, namespace=None):
+        pass
+
+    def association_set(self, set_name, namespace=None):
+        pass
+
+    @property
+    def association_sets(self):
+        pass
+
+    def check_role_property_names(self, role, entity_type_name, namespace):
+        pass
+
+    # pylint: disable=too-many-locals,too-many-branches,too-many-statements
+    @staticmethod
+    def from_etree(schema_nodes, config: Config):
+        schema = Schema(config)
+        schema._is_valid = True
+
+        return schema
+
+
+        # Parse Schema nodes by parts to get over the problem of not-yet known
+        # entity types referenced by entity sets, function imports and
+        # annotations.
+
+        # First, process EnumType, EntityType and ComplexType nodes. They have almost no dependencies on other elements.
+
+        # resolve types of properties
+
+            # skip collections (no need to assign any types since type of collection
+            # items is resolved separately
+
+        # Then, process Associations nodes because they refer EntityTypes and
+        # they are referenced by AssociationSets.
+
+            # Check if the role was defined in the current association
+            # Check if principal role properties exist
+            # Check if the role was defined in the current association
+            # Check if dependent role properties exist
+
+        # resolve navigation properties
+            # skip null type
+            # skip collections
+
+        # Then, process EntitySet, FunctionImport and AssociationSet nodes.
+            # complete type information for return type and parameters
+
+            # Check if an entity set exists in the current scheme
+            # and add a reference to the corresponding entity set
+
+            # Check if role is defined in Association
+
+        # Finally, process Annotation nodes when all Scheme nodes are completely processed.
+
+
 
 
 class MetadataBuilder:
