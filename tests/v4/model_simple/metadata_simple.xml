@@ -1,0 +1,39 @@
+<edmx:Edmx xmlns:edmx="http://docs.oasis-open.org/odata/ns/edmx" Version="4.0">
+  <edmx:DataServices>
+    <Schema xmlns="http://docs.oasis-open.org/odata/ns/edm" Namespace="com.example.ODataDemo">
+      <EntityType Name="Product">
+        <Key><PropertyRef Name="ID"/></Key>
+        <Property Name="ID" Type="Edm.Int32" Nullable="false"/>
+        <Property Name="Name" Type="Edm.String"/>
+        <Property Name="Description" Type="Edm.String"/>
+        <Property Name="ReleasedDate" Type="Edm.DateTimeOffset" Nullable="false"/>
+        <Property Name="DiscontinuedDate" Type="Edm.DateTimeOffset"/>
+        <Property Name="Rating" Type="Edm.Int16" Nullable="false"/>
+        <Property Name="Price" Type="Edm.Double" Nullable="false"/>
+        <NavigationProperty Name="Supplier" Type="ODataDemo.Supplier" Partner="Products"/>
+      </EntityType>
+      <EntityType Name="Supplier">
+        <Key><PropertyRef Name="ID"/></Key>
+        <Property Name="ID" Type="Edm.Int32" Nullable="false"/>
+        <Property Name="Name" Type="Edm.String"/>
+        <Property Name="Address" Type="ODataDemo.Address"/>
+        <NavigationProperty Name="Products" Type="Collection(ODataDemo.Product)" Partner="Supplier" />
+      </EntityType>
+      <ComplexType Name="Address">
+      <Property Name="ZipCode" Type="Edm.String"/>
+      </ComplexType>
+      <EntityContainer Name="DemoService">
+        <EntitySet Name="Products" EntityType="ODataDemo.Product">
+          <NavigationPropertyBinding Path="Supplier" Target="Suppliers"/>
+        </EntitySet>
+        <EntitySet Name="Suppliers" EntityType="ODataDemo.Supplier">
+          <NavigationPropertyBinding Path="Products" Target="Products"/>
+        </EntitySet>
+      </EntityContainer>
+    </Schema>
+    <Schema xmlns="http://docs.oasis-open.org/odata/ns/edm" Namespace="V2_Compatible_Primitive_Types">
+    </Schema>
+    <Schema xmlns="http://docs.oasis-open.org/odata/ns/edm" Namespace="V4_Only_Primitive_Types">
+    </Schema>
+  </edmx:DataServices>
+</edmx:Edmx>
